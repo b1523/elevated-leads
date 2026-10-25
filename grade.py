@@ -11,6 +11,7 @@ Rows with no website score 100.
 import csv
 import re
 import ssl
+import subprocess
 import sys
 import time
 import urllib.error
@@ -37,13 +38,45 @@ BUILDERS = {
 }
 
 
+HEADERS = {
+    "User-Agent": UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-AU,en;q=0.9",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+}
+
+BLOCK_CODES = {401, 403, 406, 409, 429, 503, 520, 521, 522, 523, 524}
+
+
+def clean(url):
+    return url.split("?")[0]
+
+
 def fetch(url, timeout=15):
     ctx = ssl.create_default_context()
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    req = urllib.request.Request(url, headers=HEADERS)
     t0 = time.time()
     with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
         body = r.read(400_000).decode("utf-8", "replace")
         return r.status, r.geturl(), body, time.time() - t0
+
+
+def fetch_curl(url, timeout=20):
+    """Different TLS fingerprint to urllib; gets past some WAFs."""
+    cmd = ["curl", "-sSL", "--compressed", "--max-time", str(timeout),
+           "-o", "-", "-w", "\n__STATUS__%{http_code}__URL__%{url_effective}",
+           "-A", UA, "-H", "Accept-Language: en-AU,en;q=0.9",
+           "-H", "Accept: text/html,application/xhtml+xml,*/*;q=0.8", url]
+    t0 = time.time()
+    out = subprocess.run(cmd, capture_output=True, timeout=timeout + 5)
+    text = out.stdout.decode("utf-8", "replace")
+    m = re.search(r"\n__STATUS__(\d+)__URL__(.*)$", text, re.S)
+    if not m:
+        raise RuntimeError(out.stderr.decode("utf-8", "replace")[:100] or "curl failed")
+    return int(m.group(1)), m.group(2), text[:m.start()][:400_000], time.time() - t0
 
 
 def grade(row):
@@ -51,25 +84,44 @@ def grade(row):
     flags, score = [], 0
 
     if not url:
-        row.update(grade_score=100, grade_flags="NO WEBSITE", final_url="")
+        row.update(grade_score=100, grade_status="GRADED", grade_flags="NO WEBSITE", final_url="")
         return row
 
     host = re.sub(r"^https?://", "", url).split("/")[0].lower()
     if any(d in host for d in NOT_A_REAL_SITE):
-        row.update(grade_score=95, grade_flags="Only a social/listing page",
-                   final_url=url)
+        row.update(grade_score=95, grade_status="GRADED",
+                   grade_flags="Only a social/listing page", final_url=url)
         return row
 
+    url = clean(url)
     body, status, final, secs = "", None, url, 0.0
-    try:
-        status, final, body, secs = fetch(url)
-    except ssl.SSLError:
+    err = None
+    for attempt in (fetch, fetch_curl):
+        try:
+            status, final, body, secs = attempt(url)
+            err = None
+            if status == 200:
+                break
+        except urllib.error.HTTPError as e:
+            status, err = e.code, f"HTTP {e.code}"
+        except ssl.SSLError:
+            status, err = None, "SSL error"
+        except Exception as e:
+            status, err = None, f"{type(e).__name__}"
+
+    # Still blocked after both methods -> we can't tell. Do NOT call it bad.
+    if status in BLOCK_CODES or (status is None and err in (
+            "RemoteDisconnected", "ConnectionResetError", "TimeoutError", "timeout")):
+        row.update(grade_score=0, grade_status="UNVERIFIED",
+                   grade_flags=f"Blocked bot check ({err or status}) - check by eye",
+                   final_url=final)
+        return row
+    if status == 404 or (status and status >= 500):
+        flags.append(f"HTTP {status}"); score += 60
+    elif status is None and err == "SSL error":
         flags.append("SSL error"); score += 40
-    except urllib.error.HTTPError as e:
-        status = e.code
-        flags.append(f"HTTP {e.code}"); score += 60
-    except Exception as e:
-        flags.append(f"Unreachable ({type(e).__name__})"); score += 70
+    elif status is None:
+        flags.append(f"Unreachable ({err})"); score += 70
 
     if status == 200 and body:
         low = body.lower()
@@ -108,7 +160,7 @@ def grade(row):
         if "flash" in low and "swf" in low:
             flags.append("Flash"); score += 30
 
-    row.update(grade_score=min(score, 100),
+    row.update(grade_score=min(score, 100), grade_status="GRADED",
                grade_flags="; ".join(flags) or "Looks modern",
                final_url=final)
     return row
@@ -130,9 +182,13 @@ def main():
         w.writeheader()
         w.writerows(graded)
 
-    buckets = {"100 no site": 0, "60-99 poor": 0, "30-59 dated": 0, "0-29 fine": 0}
+    buckets = {"100 no site": 0, "60-99 poor": 0, "30-59 dated": 0,
+               "0-29 fine": 0, "unverified": 0}
     for r in graded:
         s = int(r["grade_score"])
+        if r["grade_status"] == "UNVERIFIED":
+            buckets["unverified"] += 1
+            continue
         k = ("100 no site" if s == 100 else "60-99 poor" if s >= 60
              else "30-59 dated" if s >= 30 else "0-29 fine")
         buckets[k] += 1

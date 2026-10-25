@@ -2,6 +2,11 @@ name: Scout leads
 
 on:
   workflow_dispatch:
+    inputs:
+      grade_only:
+        description: 'Skip Places search, just re-grade existing leads.csv'
+        type: boolean
+        default: false
   push:
     paths:
       - 'searches.json'
@@ -23,6 +28,7 @@ jobs:
           python-version: '3.12'
 
       - name: Run the scout
+        if: ${{ inputs.grade_only != true }}
         env:
           PLACES_API_KEY: ${{ secrets.PLACES_API_KEY }}
         run: python scout.py
