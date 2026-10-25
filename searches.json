@@ -1,26 +1,38 @@
 {
-  "_comment": "Edit the searches list below, then save. Each line is one Google Maps search. only_no_website=true keeps only businesses with no website at all. Set it to false to also capture businesses with old/bad sites.",
-
-  "only_no_website": true,
-  "min_reviews": 3,
+  "_comment": "Edit the searches list, save, and the pipeline re-runs. only_no_website=false keeps every business and grades their site. grade_score: higher = worse site = better lead.",
+  "only_no_website": false,
+  "min_reviews": 5,
   "max_pages_per_search": 3,
-
   "searches": [
     "pool cleaning service Brisbane",
     "pool maintenance Gold Coast",
     "pool service Logan",
     "pool cleaning Redlands Brisbane",
     "pool cleaning Ipswich",
+    "pool cleaning Moreton Bay",
+    "pool shop Brisbane",
     "pressure washing Brisbane",
+    "pressure cleaning Gold Coast",
     "house washing Brisbane northside",
     "driveway cleaning Brisbane southside",
+    "roof cleaning Brisbane",
     "gutter cleaning Brisbane",
+    "window cleaning Brisbane",
     "bond cleaning Brisbane",
     "commercial cleaning Brisbane",
     "carpet cleaning Brisbane",
+    "pest control Brisbane",
     "electrician Brisbane northside",
+    "electrician Brisbane southside",
     "electrician Ipswich",
     "plumber Brisbane northside",
-    "plumber Logan"
+    "plumber Brisbane southside",
+    "plumber Logan",
+    "air conditioning installation Brisbane",
+    "lawn mowing Brisbane",
+    "landscaping Brisbane",
+    "handyman Brisbane",
+    "painter Brisbane",
+    "fencing contractor Brisbane"
   ]
 }
